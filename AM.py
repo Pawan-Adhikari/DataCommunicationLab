@@ -173,3 +173,27 @@ elif st.session_state["active_metric"] == "Bandwidth":
 
 # Render in Streamlit
 st.plotly_chart(fig, use_container_width=True)
+
+st.subheader("Fourier Transform Representation and Derivation")
+st.markdown(
+    r"""
+For a single-tone AM signal,
+
+$$
+s_{AM}(t)=A_c\left[1+\mu\cos(\omega_m t)\right]\cos(\omega_c t)
+$$
+
+Using $\cos a\cos b=\frac{1}{2}[\cos(a+b)+\cos(a-b)]$,
+
+$$
+s_{AM}(t)=A_c\cos(\omega_c t)+\frac{\mu A_c}{2}\cos((\omega_c+\omega_m)t)+\frac{\mu A_c}{2}\cos((\omega_c-\omega_m)t)
+$$
+
+Therefore, the Fourier transform contains discrete lines at the carrier and the two sidebands:
+
+$$
+S_{AM}(\omega)=\pi A_c\left[\delta(\omega-\omega_c)+\delta(\omega+\omega_c)\right]
++ \frac{\pi \mu A_c}{2}\sum_{\pm}\left[\delta(\omega-(\omega_c\pm\omega_m))+\delta(\omega+ (\omega_c\pm\omega_m))\right]
+$$
+"""
+)

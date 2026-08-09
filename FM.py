@@ -3,6 +3,11 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+try:
+    from scipy.special import jv
+except ImportError:
+    jv = None
+
 st.set_page_config(page_title="FM Signal Synthesizer", layout="wide")
 st.title("Interactive FM Signal Synthesizer")
 st.markdown("Adjust the parameters to synthesize and visualize Frequency Modulated signals.")
@@ -46,46 +51,49 @@ t = np.linspace(0, T, 4000)
 # Signals
 message = Am * np.sin(2 * np.pi * fm * t)
 carrier = Ac * np.sin(2 * np.pi * fc * t)
-instantaneous_phase = 2 * np.pi * fc * t + beta * np.sin(2 * np.pi * fm * t)
+instantaneous_phase = 2 * np.pi * fc * t - beta * np.cos(2 * np.pi * fm * t)
 fm_wave = Ac * np.sin(instantaneous_phase)
-instantaneous_frequency = fc + beta * fm * np.cos(2 * np.pi * fm * t)
+instantaneous_frequency = fc + beta * fm * np.sin(2 * np.pi * fm * t)
 
-# Spectrum approximation using Bessel-style sidebands
-freqs = np.array([fc - fm, fc, fc + fm, fc + 2 * fm, fc - 2 * fm])
-amps = np.array([0.5 * beta * Ac, Ac, 0.5 * beta * Ac, 0.25 * beta * beta * Ac, 0.25 * beta * beta * Ac])
-
-# Bessel-based spectrum approximation for FM
-n_terms = int(np.ceil(beta + 6))
+# Bessel-based spectrum and bandwidth
+n_terms = int(np.ceil(beta + 8))
+sideband_orders = []
 sideband_freqs = []
 sideband_amps = []
 
 for n in range(-n_terms, n_terms + 1):
     freq = fc + n * fm
-    sideband_freqs.append(freq)
-    try:
-        from scipy.special import jv
-    except ImportError:
-        jv = None
-
     if jv is not None:
         amplitude = abs(jv(n, beta)) * Ac
     else:
         amplitude = Ac * np.exp(-0.5 * (n / max(beta, 1e-3)) ** 2)
 
+    sideband_orders.append(n)
+    sideband_freqs.append(freq)
     sideband_amps.append(amplitude)
 
-# Sort and keep a clear, readable set of frequencies
-order = np.argsort(sideband_freqs)
-sideband_freqs = np.array(sideband_freqs)[order]
-sideband_amps = np.array(sideband_amps)[order]
+sideband_orders = np.array(sideband_orders)
+sideband_freqs = np.array(sideband_freqs)
+sideband_amps = np.array(sideband_amps)
 
-# Keep only significant components for display
-significant_mask = sideband_amps >= max(0.05 * Ac, 0.03)
-sideband_freqs = sideband_freqs[significant_mask]
-sideband_amps = sideband_amps[significant_mask]
+significant_threshold = max(0.01 * Ac, 0.02)
+significant_mask = sideband_amps >= significant_threshold
 
-# Approximate bandwidth using significant sidebands
-bandwidth = 2 * (n_terms + 1) * fm
+if np.any(significant_mask):
+    max_significant_order = int(np.max(np.abs(sideband_orders[significant_mask])))
+else:
+    max_significant_order = 1
+
+bandwidth = 2 * max_significant_order * fm
+
+display_freqs = sideband_freqs[significant_mask]
+display_amps = sideband_amps[significant_mask]
+display_orders = sideband_orders[significant_mask]
+
+order_sort = np.argsort(display_freqs)
+display_freqs = display_freqs[order_sort]
+display_amps = display_amps[order_sort]
+display_orders = display_orders[order_sort]
 
 # Create subplots
 fig = make_subplots(
@@ -118,7 +126,6 @@ fig.add_trace(
     row=2, col=1
 )
 
-# Spectrum plot as a bar chart in the same row with a secondary y-axis is not possible with simple subplots, so we show it as a separate figure below.
 fig.update_xaxes(title_text="Time (s)", row=1, col=1)
 fig.update_yaxes(title_text="Amplitude", row=1, col=1)
 fig.update_xaxes(title_text="Time (s)", row=2, col=1)
@@ -126,16 +133,59 @@ fig.update_yaxes(title_text="Frequency (Hz)", row=2, col=1)
 
 # Add a second figure for the spectrum
 fig2 = go.Figure()
-fig2.add_trace(go.Bar(x=sideband_freqs, y=sideband_amps, name="Bessel Sidebands", marker_color="tomato"))
+fig2.add_trace(
+    go.Bar(
+        x=display_freqs,
+        y=display_amps,
+        name="Bessel Sidebands",
+        marker_color="tomato",
+        hovertemplate="Frequency: %{x:.1f} Hz<br>Amplitude: %{y:.3f}<extra></extra>",
+        text=[f"n={n}" for n in display_orders],
+        textposition="outside",
+    )
+)
 fig2.update_layout(
     title="FM Spectrum (Bessel Sidebands)",
     xaxis_title="Frequency (Hz)",
     yaxis_title="Amplitude",
     height=400,
+    bargap=0.25,
 )
+fig2.update_xaxes(showgrid=True, zeroline=True)
+fig2.update_yaxes(showgrid=True, zeroline=True)
 
 st.subheader("FM Bandwidth")
-st.write(f"Approximate bandwidth from significant Bessel sidebands: {bandwidth:.0f} Hz")
+st.write(f"Bandwidth from significant Bessel sidebands (|J_n(β)| >= {significant_threshold:.3f}): {bandwidth:.0f} Hz")
 st.write(f"Carrier frequency: {fc:.0f} Hz | Modulating frequency: {fm:.0f} Hz | Modulation index β: {beta:.2f}")
+st.write("The message signal and instantaneous frequency now use the same sine reference, so their peaks align in time.")
 st.plotly_chart(fig, use_container_width=True)
 st.plotly_chart(fig2, use_container_width=True)
+
+st.subheader("Fourier Transform Representation and Derivation")
+st.markdown(
+    r"""
+For a single-tone FM signal,
+
+$$
+s_{FM}(t)=A_c\cos\left(\omega_c t+\beta\sin(\omega_m t)\right)
+$$
+
+Using the Jacobi-Anger expansion,
+
+$$
+e^{j\beta\sin\theta}=\sum_{n=-\infty}^{\infty}J_n(\beta)e^{jn\theta}
+$$
+
+the FM waveform becomes
+
+$$
+s_{FM}(t)=A_c\sum_{n=-\infty}^{\infty}J_n(\beta)\cos\left((\omega_c+n\omega_m)t\right)
+$$
+
+So the Fourier transform has spectral lines at $\omega_c+n\omega_m$ with amplitudes weighted by $J_n(\beta)$:
+
+$$
+S_{FM}(\omega)=\pi A_c\sum_{n=-\infty}^{\infty}J_n(\beta)\left[\delta(\omega-(\omega_c+n\omega_m))+\delta(\omega+(\omega_c+n\omega_m))\right]
+$$
+"""
+)
